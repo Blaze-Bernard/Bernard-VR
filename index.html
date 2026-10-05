@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Beenard VR</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #101827;
+      color: white;
+      text-align: center;
+    }
+
+    header {
+      padding: 20px;
+    }
+
+    .world {
+      position: relative;
+      height: 70vh;
+      min-height: 450px;
+      overflow: hidden;
+      background: linear-gradient(#16243b, #31516b 60%, #203728);
+      border-radius: 25px;
+      margin: 10px;
+    }
+
+    .earth {
+      position: absolute;
+      top: 40%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 120px;
+    }
+
+    button {
+      position: absolute;
+      padding: 14px 18px;
+      border: none;
+      border-radius: 15px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    #earthBtn {
+      left: 5%;
+      bottom: 20%;
+    }
+
+    #moonBtn {
+      right: 5%;
+      bottom: 25%;
+    }
+
+    #sunBtn {
+      left: 40%;
+      bottom: 8%;
+    }
+
+    #fact {
+      margin: 15px;
+      padding: 20px;
+      background: #1d2b42;
+      border-radius: 15px;
+      font-size: 18px;
+    }
+  </style>
+</head>
+
+<body>
+
+<header>
+  <h1>🥽 Beenard VR</h1>
+  <p>Explore • Interact • Learn</p>
+  <p id="score">Discoveries: 0/3</p>
+</header>
+
+<div class="world">
+
+  <div class="earth">🌍</div>
+
+  <button id="earthBtn">🌍 Earth</button>
+  <button id="moonBtn">🌙 Moon</button>
+  <button id="sunBtn">☀️ Sun</button>
+
+</div>
+
+<div id="fact">
+  Tap an object to discover something new.
+</div>
+
+<script>
+  let discoveries = 0;
+
+  function discover(button, message) {
+    if (!button.dataset.clicked) {
+      button.dataset.clicked = "true";
+      discoveries++;
+    }
+
+    document.getElementById("fact").innerText = message;
+    document.getElementById("score").innerText =
+      "Discoveries: " + discoveries + "/3";
+  }
+
+  document.getElementById("earthBtn").onclick = function() {
+    discover(
+      this,
+      "🌍 Earth is the third planet from the Sun."
+    );
+  };
+
+  document.getElementById("moonBtn").onclick = function() {
+    discover(
+      this,
+      "🌙 The Moon orbits Earth and reflects sunlight."
+    );
+  };
+
+  document.getElementById("sunBtn").onclick = function() {
+    discover(
+      this,
+      "☀️ The Sun is the star at the center of our solar system."
+    );
+  };
+</script>
+
+</body>
+</html>
