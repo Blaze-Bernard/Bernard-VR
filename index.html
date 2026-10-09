@@ -1,0 +1,261 @@
+using System.Collections;
+using System.Collections.Generic;
+using TMPro;
+using UnityEngine;
+
+/// <summary>
+/// Minimal VR target-practice game for Meta Quest (Unity + Meta XR SDK).
+///
+/// SETUP
+/// 1. Install the Meta XR Core SDK and add an OVRCameraRig to the scene.
+///    Set OVRManager > Tracking Origin Type to "Floor Level" (heights assume the floor is y = 0).
+/// 2. Put this script on an empty GameObject placed where the player stands.
+/// 3. Drag OVRCameraRig > TrackingSpace > RightHandAnchor into "Right Hand"
+///    (if left empty, the script looks for an object named "RightHandAnchor").
+/// 4. (Optional) Add a TextMeshPro (3D) object in front of the player and
+///    drag it into "Hud Text". Needs TMP Essentials imported.
+/// Press A to start a round, right trigger to shoot.
+/// </summary>
+public class TargetPracticeGame : MonoBehaviour
+{
+    [Header("References")]
+    public Transform rightHand;
+    public TMP_Text hudText;
+    [Tooltip("Optional. If empty, a material is created at runtime (Shader.Find is unreliable in builds).")]
+    public Material laserMaterial;
+
+    [Header("Round")]
+    public float roundTime = 60f;
+    public float spawnInterval = 1.0f;
+    public int maxTargets = 5;
+    public float targetLifetime = 3.5f;
+
+    [Header("Spawn area (relative to this object)")]
+    public float minDistance = 3f;
+    public float maxDistance = 6f;
+    public float arcDegrees = 120f;
+    public Vector2 heightRange = new Vector2(0.8f, 2.2f);
+    public float targetSize = 0.5f;
+
+    [Header("Shooting")]
+    public float maxShootDistance = 50f;
+    public int pointsPerHit = 10;
+
+    // target -> time it expires
+    private readonly Dictionary<GameObject, float> targets = new Dictionary<GameObject, float>();
+    private readonly List<GameObject> expiredBuffer = new List<GameObject>();
+
+    private LineRenderer laser;
+    private Coroutine buzzRoutine;
+    private bool running;
+    private float timeLeft;
+    private float spawnTimer;
+    private int score;
+    private int shots;
+    private int hits;
+    private int lastSecondShown = -1;
+
+    void Start()
+    {
+        if (rightHand == null)
+        {
+            var found = GameObject.Find("RightHandAnchor");
+            if (found != null) rightHand = found.transform;
+        }
+        if (rightHand == null)
+        {
+            Debug.LogError("TargetPracticeGame: assign the Right Hand transform (OVRCameraRig > RightHandAnchor).");
+            enabled = false;
+            return;
+        }
+
+        SetupLaser();
+        UpdateHud();
+    }
+
+    void OnDisable()
+    {
+        OVRInput.SetControllerVibration(0f, 0f, OVRInput.Controller.RTouch);
+        ClearTargets();
+        running = false;
+    }
+
+    void Update()
+    {
+        UpdateLaser();
+
+        if (!running)
+        {
+            if (OVRInput.GetDown(OVRInput.Button.One, OVRInput.Controller.RTouch)) StartRound();
+            return;
+        }
+
+        timeLeft -= Time.deltaTime;
+        if (timeLeft <= 0f) { EndRound(); return; }
+
+        spawnTimer -= Time.deltaTime;
+        if (spawnTimer <= 0f && targets.Count < maxTargets)
+        {
+            SpawnTarget();
+            spawnTimer = spawnInterval;
+        }
+
+        if (OVRInput.GetDown(OVRInput.Button.PrimaryIndexTrigger, OVRInput.Controller.RTouch))
+            Shoot();
+
+        ExpireTargets();
+
+        // Only rebuild HUD text when the displayed second changes (avoids per-frame GC on Quest).
+        int sec = Mathf.CeilToInt(timeLeft);
+        if (sec != lastSecondShown)
+        {
+            lastSecondShown = sec;
+            UpdateHud();
+        }
+    }
+
+    void StartRound()
+    {
+        ClearTargets();
+        score = shots = hits = 0;
+        timeLeft = roundTime;
+        spawnTimer = 0f;
+        lastSecondShown = -1;
+        running = true;
+        UpdateHud();
+    }
+
+    void EndRound()
+    {
+        running = false;
+        ClearTargets();
+        UpdateHud();
+    }
+
+    void SpawnTarget()
+    {
+        Vector3 fwd = Vector3.ProjectOnPlane(transform.forward, Vector3.up);
+        fwd = fwd.sqrMagnitude < 0.0001f ? Vector3.forward : fwd.normalized;
+
+        float angle = Random.Range(-arcDegrees / 2f, arcDegrees / 2f);
+        float dist = Random.Range(minDistance, maxDistance);
+        float height = Random.Range(heightRange.x, heightRange.y);
+
+        Vector3 pos = transform.position + Quaternion.Euler(0f, angle, 0f) * fwd * dist;
+        pos.y = transform.position.y + height;
+
+        var go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        go.transform.position = pos;
+        go.transform.localScale = Vector3.one * targetSize;
+        go.GetComponent<Renderer>().material.color = Color.HSVToRGB(Random.value, 0.8f, 1f);
+
+        targets[go] = Time.time + targetLifetime;
+    }
+
+    void Shoot()
+    {
+        shots++;
+        Buzz(0.1f, 0.3f);
+
+        if (Physics.Raycast(rightHand.position, rightHand.forward, out RaycastHit hit,
+                maxShootDistance, ~0, QueryTriggerInteraction.Ignore)
+            && targets.ContainsKey(hit.collider.gameObject))
+        {
+            hits++;
+            score += pointsPerHit;
+            Buzz(0.15f, 0.8f);
+            KillTarget(hit.collider.gameObject);
+            UpdateHud();
+        }
+    }
+
+    void ExpireTargets()
+    {
+        expiredBuffer.Clear();
+        foreach (var kv in targets)
+            if (Time.time >= kv.Value) expiredBuffer.Add(kv.Key);
+        for (int i = 0; i < expiredBuffer.Count; i++) KillTarget(expiredBuffer[i]);
+    }
+
+    void KillTarget(GameObject go)
+    {
+        targets.Remove(go);
+        if (go == null) return;
+
+        // .material creates a per-object instance; destroy it so it doesn't leak.
+        var r = go.GetComponent<Renderer>();
+        if (r != null) Destroy(r.material);
+        Destroy(go);
+    }
+
+    void ClearTargets()
+    {
+        expiredBuffer.Clear();
+        expiredBuffer.AddRange(targets.Keys);
+        for (int i = 0; i < expiredBuffer.Count; i++) KillTarget(expiredBuffer[i]);
+        targets.Clear();
+    }
+
+    void SetupLaser()
+    {
+        laser = gameObject.AddComponent<LineRenderer>();
+        laser.positionCount = 2;
+        laser.startWidth = laser.endWidth = 0.005f;
+        laser.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        laser.receiveShadows = false;
+
+        if (laserMaterial != null)
+        {
+            laser.sharedMaterial = laserMaterial;
+        }
+        else
+        {
+            // Borrow the render pipeline's default shader from a throwaway primitive
+            // (Shader.Find("Sprites/Default") gets stripped from builds -> pink/invisible laser).
+            var temp = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            var mat = new Material(temp.GetComponent<Renderer>().sharedMaterial);
+            Destroy(temp);
+            mat.color = Color.cyan;
+            laser.sharedMaterial = mat;
+        }
+        laser.startColor = laser.endColor = Color.cyan;
+    }
+
+    void UpdateLaser()
+    {
+        laser.SetPosition(0, rightHand.position);
+        laser.SetPosition(1, rightHand.position + rightHand.forward * 5f);
+    }
+
+    void Buzz(float seconds, float strength)
+    {
+        // Stop any running buzz so overlapping shots don't cut each other off.
+        if (buzzRoutine != null) StopCoroutine(buzzRoutine);
+        buzzRoutine = StartCoroutine(BuzzRoutine(seconds, strength));
+    }
+
+    IEnumerator BuzzRoutine(float seconds, float strength)
+    {
+        OVRInput.SetControllerVibration(1f, strength, OVRInput.Controller.RTouch);
+        yield return new WaitForSeconds(seconds);
+        OVRInput.SetControllerVibration(0f, 0f, OVRInput.Controller.RTouch);
+        buzzRoutine = null;
+    }
+
+    void UpdateHud()
+    {
+        if (hudText == null) return;
+
+        if (running)
+        {
+            hudText.text = $"Score: {score}\nTime: {Mathf.CeilToInt(timeLeft)}";
+        }
+        else
+        {
+            float acc = shots > 0 ? 100f * hits / shots : 0f;
+            hudText.text = shots > 0
+                ? $"Final score: {score}\nAccuracy: {acc:0}%\nPress A to play again"
+                : "Press A to start";
+        }
+    }
+}
